@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mvp-oficina/contracts/common/problem.v1.schema.json",
+  "title": "Problem.v1",
+  "type": "object",
+  "required": ["code", "message", "correlation_id"],
+  "properties": {
+    "code": {
+      "type": "string",
+      "pattern": "^[A-Z][A-Z0-9_]*$"
+    },
+    "message": {"type": "string", "minLength": 1, "maxLength": 512},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "operation_id": {
+      "oneOf": [
+        {"type": "string", "format": "uuid"},
+        {"type": "null"}
+      ]
+    },
+    "details": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}
+

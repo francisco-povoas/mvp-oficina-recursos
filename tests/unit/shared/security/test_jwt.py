@@ -95,38 +95,54 @@ def test_decode_token_expirado_lanca_invalid_token(usuario_id):
 # --- get_sub ---
 
 def test_get_sub_retorna_uuid_e_perfis(provider, usuario_id):
-    token_data = provider.create_access_token({"sub": usuario_id, "perfis": ["Mecanico"]})
-    sub, perfis = provider.get_sub(token_data["access_token"])
+    token_data = provider.create_user_token(
+        subject=usuario_id, roles=["Mecanico"], audience="mvp-oficina-users"
+    )
+    sub, perfis = provider.get_sub(
+        token_data["access_token"], audience="mvp-oficina-users"
+    )
     assert sub == usuario_id
     assert perfis == ["Mecanico"]
 
 
 def test_get_sub_sem_perfis_retorna_lista_vazia(provider, usuario_id):
-    token_data = provider.create_access_token({"sub": usuario_id})
-    sub, perfis = provider.get_sub(token_data["access_token"])
+    token_data = provider.create_user_token(
+        subject=usuario_id, roles=[], audience="mvp-oficina-users"
+    )
+    sub, perfis = provider.get_sub(
+        token_data["access_token"], audience="mvp-oficina-users"
+    )
     assert sub == usuario_id
     assert perfis == []
 
 
 def test_get_sub_formato_legado_user_id_prefixo(provider, usuario_id):
     """Compatibilidade com formato legado 'user_id:<uuid>'."""
-    token_data = provider.create_access_token({"sub": f"user_id:{usuario_id}"})
-    sub, _ = provider.get_sub(token_data["access_token"])
+    token_data = provider.create_user_token(
+        subject=f"user_id:{usuario_id}", roles=[], audience="mvp-oficina-users"
+    )
+    sub, _ = provider.get_sub(
+        token_data["access_token"], audience="mvp-oficina-users"
+    )
     assert sub == usuario_id
 
 
 def test_get_sub_token_invalido_lanca_invalid_token(provider):
     with pytest.raises(InvalidToken):
-        provider.get_sub("token.invalido")
+        provider.get_sub("token.invalido", audience="mvp-oficina-users")
 
 
 def test_get_sub_sub_nao_uuid_lanca_invalid_token(provider):
-    token_data = provider.create_access_token({"sub": "nao-e-um-uuid"})
+    token_data = provider.create_user_token(
+        subject="nao-e-um-uuid", roles=[], audience="mvp-oficina-users"
+    )
     with pytest.raises(InvalidToken):
-        provider.get_sub(token_data["access_token"])
+        provider.get_sub(token_data["access_token"], audience="mvp-oficina-users")
 
 
 def test_get_sub_sub_vazio_lanca_invalid_token(provider):
-    token_data = provider.create_access_token({"sub": ""})
+    token_data = provider.create_user_token(
+        subject="", roles=[], audience="mvp-oficina-users"
+    )
     with pytest.raises(InvalidToken):
-        provider.get_sub(token_data["access_token"])
+        provider.get_sub(token_data["access_token"], audience="mvp-oficina-users")

@@ -20,6 +20,7 @@ COPY alembic.ini .
 COPY alembic ./alembic
 COPY src ./src
 COPY tests ./tests
+COPY contracts ./contracts
 
 CMD ["pytest", "--cov=src/app", "--cov-report=term-missing"]
 

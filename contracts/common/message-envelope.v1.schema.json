@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mvp-oficina/contracts/common/message-envelope.v1.schema.json",
+  "title": "MessageEnvelope.v1",
+  "type": "object",
+  "required": [
+    "message_id",
+    "message_type",
+    "message_version",
+    "occurred_at",
+    "correlation_id",
+    "causation_id",
+    "operation_id",
+    "saga_id",
+    "payload"
+  ],
+  "properties": {
+    "message_id": {"type": "string", "format": "uuid"},
+    "message_type": {"type": "string", "minLength": 1},
+    "message_version": {"const": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "causation_id": {
+      "oneOf": [
+        {"type": "string", "format": "uuid"},
+        {"type": "null"}
+      ]
+    },
+    "operation_id": {"type": "string", "format": "uuid"},
+    "saga_id": {
+      "oneOf": [
+        {"type": "string", "format": "uuid"},
+        {"type": "null"}
+      ]
+    },
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": false
+}
+
