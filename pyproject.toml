@@ -1,0 +1,26 @@
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers"
+asyncio_mode = "auto"
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = [
+  "unit: testes sem dependências externas",
+  "integration: testes com PostgreSQL real",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["src/app"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_empty = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "B"]
+ignore = ["B017", "B904", "E501"]

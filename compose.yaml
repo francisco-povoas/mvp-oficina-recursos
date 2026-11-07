@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: recursos
+      POSTGRES_USER: recursos
+      POSTGRES_PASSWORD: recursos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recursos -d recursos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    ports:
+      - "5439:5432"
+    volumes:
+      - recursos_data:/var/lib/postgresql/data
+
+  api:
+    build:
+      context: .
+      target: runtime
+    environment:
+      ENVIRONMENT: dev
+      LOG_LEVEL: INFO
+      DATABASE_URL: postgresql+asyncpg://recursos:recursos@db:5432/recursos
+      JWT_SECRET_KEY: chave-local-nao-usar-em-producao
+      JWT_ALGORITHM: HS256
+    ports:
+      - "8002:8002"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  recursos_data:
