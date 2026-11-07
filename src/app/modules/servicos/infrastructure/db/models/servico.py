@@ -11,6 +11,12 @@ class ServicoModel(SQLModel, table=True):
     """Modelo ORM da tabela de catálogo de serviços."""
 
     __tablename__ = "catalogo_servico"
+    __table_args__ = (
+        sa.CheckConstraint("valor_base >= 0", name="ck_servico_valor_nao_negativo"),
+        sa.CheckConstraint(
+            "tempo_medio_minutos > 0", name="ck_servico_tempo_medio_positivo"
+        ),
+    )
 
     id: UUID = Field(primary_key=True)
     nome: str = Field(sa_column=sa.Column(sa.String(100), nullable=False, unique=True))

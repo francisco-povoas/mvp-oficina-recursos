@@ -11,6 +11,20 @@ class ItemEstoqueModel(SQLModel, table=True):
     """Modelo ORM da tabela de itens de estoque."""
 
     __tablename__ = "item_estoque"
+    __table_args__ = (
+        sa.CheckConstraint(
+            "quantidade_disponivel >= 0", name="ck_item_saldo_disponivel"
+        ),
+        sa.CheckConstraint(
+            "quantidade_reservada >= 0", name="ck_item_saldo_reservado"
+        ),
+        sa.CheckConstraint(
+            "quantidade_minima >= 0", name="ck_item_quantidade_minima"
+        ),
+        sa.CheckConstraint(
+            "valor_unitario >= 0", name="ck_item_valor_nao_negativo"
+        ),
+    )
 
     id: UUID = Field(primary_key=True)
     tipo: str = Field(sa_column=sa.Column(sa.String(10), nullable=False))
