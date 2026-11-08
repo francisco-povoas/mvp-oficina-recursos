@@ -24,10 +24,10 @@ _scope_exception = HTTPException(
 )
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
-service_bearer = HTTPBearer(auto_error=True)
+service_bearer = HTTPBearer(auto_error=False)
 Oauth2Token = Annotated[str, Depends(oauth2_scheme)]
 ServiceCredential = Annotated[
-    HTTPAuthorizationCredentials,
+    HTTPAuthorizationCredentials | None,
     Depends(service_bearer),
 ]
 
@@ -81,6 +81,8 @@ class RequireServiceScopes:
         credential: ServiceCredential,
         token_provider: TokenProvider,
     ) -> ServicePrincipal:
+        if credential is None:
+            raise _credentials_exception
         try:
             client_id, granted = token_provider.get_service(
                 credential.credentials,

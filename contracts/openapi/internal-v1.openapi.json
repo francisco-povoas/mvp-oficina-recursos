@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MVP Oficina Recursos — API interna",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "Contratos de catálogo e reconciliação. Implementação funcional planejada para a Etapa 2."
   },
   "servers": [{"url": "http://mvp-oficina-recursos/internal/v1"}],
@@ -18,10 +18,12 @@
           {"$ref": "#/components/parameters/CorrelationId"}
         ],
         "responses": {
-          "200": {"description": "Snapshot do serviço", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ServiceSnapshot"}}}},
+          "200": {"description": "Snapshot do serviço", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ServiceSnapshot"}}}},
           "401": {"$ref": "#/components/responses/Unauthorized"},
           "403": {"$ref": "#/components/responses/Forbidden"},
           "404": {"$ref": "#/components/responses/NotFound"},
+          "422": {"$ref": "#/components/responses/ValidationError"},
+          "500": {"$ref": "#/components/responses/InternalError"},
           "501": {"$ref": "#/components/responses/Planned"}
         }
       }
@@ -37,10 +39,12 @@
           {"$ref": "#/components/parameters/CorrelationId"}
         ],
         "responses": {
-          "200": {"description": "Snapshot da peça ou insumo", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceSnapshot"}}}},
+          "200": {"description": "Snapshot da peça ou insumo", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResourceSnapshot"}}}},
           "401": {"$ref": "#/components/responses/Unauthorized"},
           "403": {"$ref": "#/components/responses/Forbidden"},
           "404": {"$ref": "#/components/responses/NotFound"},
+          "422": {"$ref": "#/components/responses/ValidationError"},
+          "500": {"$ref": "#/components/responses/InternalError"},
           "501": {"$ref": "#/components/responses/Planned"}
         }
       }
@@ -56,10 +60,12 @@
           {"$ref": "#/components/parameters/CorrelationId"}
         ],
         "responses": {
-          "200": {"description": "Resultado autoritativo e idempotente", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OperationResult"}}}},
+          "200": {"description": "Resultado autoritativo e idempotente", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/OperationResult"}}}},
           "401": {"$ref": "#/components/responses/Unauthorized"},
           "403": {"$ref": "#/components/responses/Forbidden"},
           "404": {"$ref": "#/components/responses/NotFound"},
+          "422": {"$ref": "#/components/responses/ValidationError"},
+          "500": {"$ref": "#/components/responses/InternalError"},
           "501": {"$ref": "#/components/responses/Planned"}
         }
       }
@@ -81,6 +87,9 @@
         "description": "Mesma chave e payload devolvem o mesmo resultado; payload divergente gera 409.",
         "schema": {"type": "string", "minLength": 8, "maxLength": 128}
       }
+    },
+    "headers": {
+      "CorrelationId": {"schema": {"type": "string", "format": "uuid"}}
     },
     "schemas": {
       "ServiceSnapshot": {
@@ -124,18 +133,26 @@
         "required": ["code", "message", "correlation_id"],
         "properties": {
           "code": {"type": "string", "pattern": "^[A-Z][A-Z0-9_]*$"},
-          "message": {"type": "string"},
+          "message": {"type": "string", "minLength": 1, "maxLength": 512},
           "correlation_id": {"type": "string", "format": "uuid"},
-          "operation_id": {"type": ["string", "null"], "format": "uuid"}
+          "operation_id": {
+            "oneOf": [
+              {"type": "string", "format": "uuid"},
+              {"type": "null"}
+            ]
+          },
+          "details": {"type": "object", "additionalProperties": true}
         },
         "additionalProperties": false
       }
     },
     "responses": {
-      "Unauthorized": {"description": "Token ausente, inválido, expirado, de tipo incorreto ou para outra audiência", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
-      "Forbidden": {"description": "Escopo insuficiente", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
-      "NotFound": {"description": "Recurso ou operação não encontrado", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
-      "Planned": {"description": "Contrato materializado; integração funcional pertence à Etapa 2", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}}
+      "Unauthorized": {"description": "Token ausente, inválido, expirado, de tipo incorreto ou para outra audiência", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
+      "Forbidden": {"description": "Escopo insuficiente", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
+      "NotFound": {"description": "Recurso ou operação não encontrado", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
+      "ValidationError": {"description": "Header, parâmetro ou corpo da requisição inválido", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
+      "InternalError": {"description": "Falha interna sem exposição de detalhes sensíveis", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}},
+      "Planned": {"description": "Contrato materializado; integração funcional pertence à Etapa 2", "headers": {"X-Correlation-ID": {"$ref": "#/components/headers/CorrelationId"}}, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Problem"}}}}
     }
   }
 }

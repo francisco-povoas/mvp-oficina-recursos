@@ -31,7 +31,7 @@ def _load(path: Path) -> dict:
 def test_internal_openapi_is_versioned_and_marks_planned_integrations() -> None:
     document = _load(OPENAPI_PATH)
     assert document["openapi"] == "3.1.0"
-    assert document["info"]["version"] == "1.0.0"
+    assert document["info"]["version"] == "1.0.1"
     assert set(document["paths"]) == set(EXPECTED)
 
     for path, method in EXPECTED.items():

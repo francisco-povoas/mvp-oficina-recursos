@@ -10,6 +10,7 @@ from app.shared.infra.api.dependencies.auth import get_usuario_autenticado
 from app.shared.infra.security.jwt import JWTProvider
 
 SECRET = "segredo-hs256-exclusivo-dos-testes"
+CORRELATION_ID = str(uuid4())
 
 
 def _settings() -> Settings:
@@ -48,10 +49,20 @@ def test_internal_resources_endpoint_requires_exact_service_scope() -> None:
     path = f"/internal/v1/catalog/resources/{uuid4()}"
 
     with TestClient(create_app(settings)) as client:
-        assert client.get(path).status_code == 401
-        assert client.get(path, headers={"Authorization": f"Bearer {user}"}).status_code == 401
-        assert client.get(path, headers={"Authorization": f"Bearer {wrong_scope}"}).status_code == 403
-        assert client.get(path, headers={"Authorization": f"Bearer {correct}"}).status_code == 501
+        headers = {"X-Correlation-ID": CORRELATION_ID}
+        assert client.get(path, headers=headers).status_code == 401
+        assert client.get(
+            path,
+            headers={**headers, "Authorization": f"Bearer {user}"},
+        ).status_code == 401
+        assert client.get(
+            path,
+            headers={**headers, "Authorization": f"Bearer {wrong_scope}"},
+        ).status_code == 403
+        assert client.get(
+            path,
+            headers={**headers, "Authorization": f"Bearer {correct}"},
+        ).status_code == 501
 
 
 def test_public_user_dependency_accepts_user_and_rejects_service() -> None:
