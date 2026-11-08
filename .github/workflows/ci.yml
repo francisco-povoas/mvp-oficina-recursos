@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    env:
+      ENVIRONMENT: test
+      LOG_LEVEL: WARNING
+      PYTHONPATH: src
+      DATABASE_URL: postgresql+asyncpg://recursos_ci:recursos_ci@127.0.0.1:5432/recursos_ci
+      JWT_SECRET_KEY: chave-ficticia-exclusiva-para-ci
+      JWT_ALGORITHM: HS256
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: recursos_ci
+          POSTGRES_USER: recursos_ci
+          POSTGRES_PASSWORD: recursos_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U recursos_ci -d recursos_ci"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Lint
+        run: python -m ruff check src tests
+      - name: Unit tests
+        run: python -m pytest tests/unit
+      - name: Contract tests
+        run: python -m pytest tests/contracts
+      - name: PostgreSQL integration tests
+        run: python -m pytest tests/integration
+      - name: Full suite and coverage gate
+        run: python -m pytest --cov=src/app --cov-report=term-missing
+      - name: Build runtime image
+        run: docker build --target runtime -t mvp-oficina-recursos:${{ github.sha }} .
