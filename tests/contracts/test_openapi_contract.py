@@ -28,18 +28,21 @@ def _load(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def test_internal_openapi_is_versioned_and_marks_planned_integrations() -> None:
+def test_internal_openapi_is_versioned_and_marks_implementation_status() -> None:
     document = _load(OPENAPI_PATH)
     assert document["openapi"] == "3.1.0"
-    assert document["info"]["version"] == "1.0.1"
+    assert document["info"]["version"] == "1.1.0"
     assert set(document["paths"]) == set(EXPECTED)
 
     for path, method in EXPECTED.items():
         operation = document["paths"][path][method]
-        if path != "/auth/token":
+        assert operation["x-required-scopes"] == EXPECTED_SCOPES[path]
+        assert operation["security"] == [{"serviceBearer": []}]
+        if path == "/catalog/services/{service_id}":
+            assert operation["x-implementation-status"] == "implemented-stage-2-rest"
+            assert "501" not in operation["responses"]
+        else:
             assert operation["x-implementation-status"] == "planned-stage-2"
-            assert operation["x-required-scopes"] == EXPECTED_SCOPES[path]
-            assert operation["security"] == [{"serviceBearer": []}]
             assert "501" in operation["responses"]
 
 

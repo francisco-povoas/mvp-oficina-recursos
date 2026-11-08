@@ -2,15 +2,15 @@
   "openapi": "3.1.0",
   "info": {
     "title": "MVP Oficina Recursos — API interna",
-    "version": "1.0.1",
-    "description": "Contratos de catálogo e reconciliação. Implementação funcional planejada para a Etapa 2."
+    "version": "1.1.0",
+    "description": "Contratos de catálogo e reconciliação da Etapa 2."
   },
   "servers": [{"url": "http://mvp-oficina-recursos/internal/v1"}],
   "paths": {
     "/catalog/services/{service_id}": {
       "get": {
         "operationId": "getServiceSnapshot",
-        "x-implementation-status": "planned-stage-2",
+        "x-implementation-status": "implemented-stage-2-rest",
         "x-required-scopes": ["resources:catalog:read"],
         "security": [{"serviceBearer": []}],
         "parameters": [
@@ -23,8 +23,7 @@
           "403": {"$ref": "#/components/responses/Forbidden"},
           "404": {"$ref": "#/components/responses/NotFound"},
           "422": {"$ref": "#/components/responses/ValidationError"},
-          "500": {"$ref": "#/components/responses/InternalError"},
-          "501": {"$ref": "#/components/responses/Planned"}
+          "500": {"$ref": "#/components/responses/InternalError"}
         }
       }
     },
@@ -94,12 +93,14 @@
     "schemas": {
       "ServiceSnapshot": {
         "type": "object",
-        "required": ["service_id", "name", "description", "price", "version"],
+        "required": ["service_id", "name", "description", "price", "estimated_minutes", "active", "version"],
         "properties": {
           "service_id": {"type": "string", "format": "uuid"},
           "name": {"type": "string"},
           "description": {"type": ["string", "null"]},
           "price": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{2})$"},
+          "estimated_minutes": {"type": "integer", "minimum": 1},
+          "active": {"type": "boolean"},
           "version": {"type": "integer", "minimum": 1}
         },
         "additionalProperties": false
