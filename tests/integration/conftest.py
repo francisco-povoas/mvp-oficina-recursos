@@ -15,7 +15,7 @@ from alembic import command
 
 DATABASE_URL = os.environ["DATABASE_URL"]
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-TABLES = ("reserva_estoque", "item_estoque", "catalogo_servico")
+TABLES = ("outbox_message", "reserva_estoque", "item_estoque", "catalogo_servico")
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

@@ -22,16 +22,24 @@ async def test_alembic_aplica_schema_independente_desde_banco_vazio(
                 },
                 "reservation_fks": inspector.get_foreign_keys("reserva_estoque"),
                 "reservation_pk": inspector.get_pk_constraint("reserva_estoque"),
+                "outbox_indexes": {
+                    index["name"] for index in inspector.get_indexes("outbox_message")
+                },
+                "outbox_checks": {
+                    constraint["name"]
+                    for constraint in inspector.get_check_constraints("outbox_message")
+                },
             }
 
         schema = await connection.run_sync(inspect_schema)
 
-    assert revision == "20261107_01_recursos"
+    assert revision == "20261108_02_outbox"
     assert schema["tables"] == {
         "alembic_version",
         "catalogo_servico",
         "item_estoque",
         "reserva_estoque",
+        "outbox_message",
     }
     assert {
         "ck_item_saldo_disponivel",
@@ -45,6 +53,12 @@ async def test_alembic_aplica_schema_independente_desde_banco_vazio(
     } <= schema["reservation_checks"]
     assert schema["reservation_pk"]["constrained_columns"] == ["operation_id"]
     assert {fk["referred_table"] for fk in schema["reservation_fks"]} == {"item_estoque"}
+    assert {"ix_outbox_pending", "ix_outbox_claimable"} <= schema["outbox_indexes"]
+    assert {
+        "ck_outbox_claim_completo",
+        "ck_outbox_claim_expiracao_valida",
+        "ck_outbox_falha_com_erro",
+    } <= schema["outbox_checks"]
 
 
 async def test_schema_nao_possui_tabelas_orm_ou_fk_para_ordens(
