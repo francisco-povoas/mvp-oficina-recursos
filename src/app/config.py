@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     aws_region: str = "us-east-1"
     sqs_endpoint_url: str | None = None
     sqs_recursos_to_ordens_url: str = ""
+    sqs_ordens_to_recursos_url: str = ""
     sqs_connect_timeout_seconds: float = 2.0
     sqs_read_timeout_seconds: float = 25.0
     sqs_send_timeout_seconds: float = 5.0
@@ -29,6 +30,14 @@ class Settings(BaseSettings):
     publisher_initial_backoff_seconds: float = 1.0
     publisher_max_backoff_seconds: float = 60.0
     publisher_contract_schema_path: str = (
+        "contracts/vendor/ordens/saga-stock.v1.schema.json"
+    )
+    consumer_batch_size: int = 10
+    consumer_concurrency: int = 4
+    consumer_wait_time_seconds: int = 20
+    consumer_visibility_timeout_seconds: int = 60
+    consumer_heartbeat_seconds: float = 20.0
+    consumer_contract_schema_path: str = (
         "contracts/vendor/ordens/saga-stock.v1.schema.json"
     )
 
@@ -64,6 +73,23 @@ class Settings(BaseSettings):
             raise ValueError("publisher max backoff must be >= initial backoff")
         if self.publisher_lease_seconds <= self.sqs_send_timeout_seconds:
             raise ValueError("publisher lease must exceed the SQS send timeout")
+
+    def validate_consumer_runtime(self) -> None:
+        self.validate_runtime()
+        if not self.sqs_ordens_to_recursos_url:
+            raise ValueError("SQS_ORDENS_TO_RECURSOS_URL must be provided")
+        if self.environment == "prod" and self.sqs_endpoint_url is not None:
+            raise ValueError("SQS_ENDPOINT_URL must be omitted in production")
+        if not 1 <= self.consumer_batch_size <= 10:
+            raise ValueError("consumer batch size must be between 1 and 10")
+        if self.consumer_concurrency <= 0:
+            raise ValueError("consumer concurrency must be positive")
+        if not 0 <= self.consumer_wait_time_seconds <= 20:
+            raise ValueError("consumer wait time must be between 0 and 20")
+        if self.consumer_visibility_timeout_seconds <= 0:
+            raise ValueError("consumer visibility timeout must be positive")
+        if not 0 < self.consumer_heartbeat_seconds < self.consumer_visibility_timeout_seconds:
+            raise ValueError("consumer heartbeat must be positive and below visibility timeout")
 
 
 @lru_cache

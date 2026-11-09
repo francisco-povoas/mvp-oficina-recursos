@@ -18,8 +18,9 @@ para reservar, receber, liberar e consumir recursos.
 
 A Outbox transacional e o publisher independente da Etapa 2 estão ativos. O publisher
 usa claim com lease e `FOR UPDATE SKIP LOCKED`, valida o schema v1 consumido de Ordens
-e publica os seis resultados aprovados na FIFO de Ordens. Inbox, consumers e handlers
-funcionais da Saga continuam fora deste checkpoint.
+e publica os seis resultados aprovados na FIFO de Ordens. O Checkpoint D acrescenta o
+consumer técnico Ordens→Recursos e a Inbox PostgreSQL persistente; handlers funcionais
+de reserva, recebimento, liberação e consumo continuam reservados ao Checkpoint E.
 
 ## APIs e contratos internos
 
@@ -30,8 +31,8 @@ de correlação e erro.
 
 Os endpoints distribuídos ainda planejados retornam explicitamente `501
 INTEGRATION_PLANNED`; contrato não equivale a integração ativa. O publisher apenas
-envia eventos já persistidos na Outbox e não implementa processamento funcional de
-estoque.
+envia eventos já persistidos na Outbox. O consumer valida envelopes e tipos da fila,
+mas não confirma mensagens sem um handler transacional injetado.
 
 ## Estrutura
 
@@ -82,8 +83,17 @@ A semântica é at-least-once. Envio aceito pelo SQS seguido de falha na confirm
 PostgreSQL deixa o lease expirar e permite reenvio do mesmo `message_id`; a futura
 Inbox, não a janela de deduplicação FIFO, impedirá efeitos de negócio repetidos.
 
-## Próxima etapa funcional
+## Consumer e Inbox
 
-A Etapa 2 continuará com o publisher financeiro e, em checkpoints posteriores,
-consumers idempotentes, Inbox e os handlers de reserva, recebimento, liberação e
-consumo.
+O processo independente inicia por `python -m app.consumer` ou
+`scripts/start-consumer.sh`. Ele usa long polling, concorrência limitada, renovação do
+visibility timeout e ACK somente após commit. A Inbox separa a deduplicação de
+transporte `(consumer_name, message_id)` da idempotência de negócio por chave semântica
+(`reserve`, `release`, `receive-backordered` ou `consume` + `operation_id`). Mensagem
+nova com a mesma operação e payload não repete o efeito; payload divergente é conflito
+e segue o redrive/DLQ.
+
+O handler recebe a mesma sessão PostgreSQL da Inbox, portanto efeito local, eventual
+Outbox de resposta e conclusão da Inbox podem ser confirmados atomicamente. Até o
+Checkpoint E instalar os handlers de negócio, o processo permanece pausado e não drena
+a fila. Isso preserva comandos reais sem simular sucesso ou antecipar a Saga.

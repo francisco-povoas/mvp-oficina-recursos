@@ -38,6 +38,7 @@ services:
       AWS_SECRET_ACCESS_KEY: local-only-elasticmq
       SQS_ENDPOINT_URL: http://elasticmq-test:9324
       SQS_RECURSOS_TO_ORDENS_URL: http://elasticmq-test:9324/000000000000/mvp-oficina-recursos-to-ordens-local.fifo
+      SQS_ORDENS_TO_RECURSOS_URL: http://elasticmq-test:9324/000000000000/mvp-oficina-ordens-to-recursos-local.fifo
     command: pytest --cov=src/app --cov-report=term-missing --cov-report=xml:coverage.xml
     depends_on:
       db-test:
