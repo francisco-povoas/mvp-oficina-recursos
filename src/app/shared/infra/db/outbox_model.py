@@ -37,6 +37,7 @@ class OutboxMessageModel(SQLModel, table=True):
     payload: str = Field(sa_column=sa.Column(sa.Text, nullable=False))
     correlation_id: UUID = Field(sa_column=sa.Column(sa.Uuid, nullable=False))
     causation_id: UUID | None = Field(default=None, sa_column=sa.Column(sa.Uuid))
+    saga_id: UUID | None = Field(default=None, sa_column=sa.Column(sa.Uuid))
     occurred_at: datetime = Field(
         sa_column=sa.Column(sa.DateTime(timezone=True), nullable=False)
     )

@@ -18,6 +18,11 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://recursos_ci:recursos_ci@127.0.0.1:5432/recursos_ci
       JWT_SECRET_KEY: chave-ficticia-exclusiva-para-ci
       JWT_ALGORITHM: HS256
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: local-only-elasticmq
+      AWS_SECRET_ACCESS_KEY: local-only-elasticmq
+      SQS_ENDPOINT_URL: http://127.0.0.1:9324
+      SQS_RECURSOS_TO_ORDENS_URL: http://127.0.0.1:9324/000000000000/mvp-oficina-recursos-to-ordens-local.fifo
     services:
       postgres:
         image: postgres:16-alpine
@@ -32,6 +37,10 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 12
+      elasticmq:
+        image: softwaremill/elasticmq-native:1.7.1
+        ports:
+          - 9324:9324
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -46,7 +55,7 @@ jobs:
         run: python -m pytest tests/unit
       - name: Contract tests
         run: python -m pytest tests/contracts
-      - name: PostgreSQL integration tests
+      - name: PostgreSQL and ElasticMQ integration tests
         run: python -m pytest tests/integration
       - name: Full suite and coverage gate
         run: python -m pytest --cov=src/app --cov-report=term-missing

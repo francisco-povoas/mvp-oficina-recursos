@@ -16,6 +16,11 @@ item usam lock pessimista (`SELECT ... FOR UPDATE`), e a reserva persistente usa
 `operation_id` como chave idempotente. O modelo cobre os estados e saldos necessários
 para reservar, receber, liberar e consumir recursos.
 
+A Outbox transacional e o publisher independente da Etapa 2 estão ativos. O publisher
+usa claim com lease e `FOR UPDATE SKIP LOCKED`, valida o schema v1 consumido de Ordens
+e publica os seis resultados aprovados na FIFO de Ordens. Inbox, consumers e handlers
+funcionais da Saga continuam fora deste checkpoint.
+
 ## APIs e contratos internos
 
 As APIs públicas preservam os perfis locais da oficina. As rotas `/internal/v1` exigem
@@ -24,9 +29,9 @@ define consultas internas de catálogo e resultado de operação, além dos sche
 de correlação e erro.
 
 Os endpoints distribuídos ainda planejados retornam explicitamente `501
-INTEGRATION_PLANNED`; contrato não equivale a integração ativa. Publicação de eventos,
-Outbox/Inbox funcionais, workers, SQS/ElasticMQ e participação na Saga pertencem à
-Etapa 2.
+INTEGRATION_PLANNED`; contrato não equivale a integração ativa. O publisher apenas
+envia eventos já persistidos na Outbox e não implementa processamento funcional de
+estoque.
 
 ## Estrutura
 
@@ -63,11 +68,22 @@ docker compose -f compose.test.yaml down --volumes --remove-orphans
 ```
 
 O health check fica em `GET /health` na porta `8002`. O CI executa lint, testes
-unitários, contratuais e de integração, gate global de cobertura e build sem publicar a
-imagem.
+unitários, contratuais e de integração com PostgreSQL/ElasticMQ, gate global de
+cobertura e build sem publicar a imagem.
+
+## Publisher da Outbox
+
+O publisher roda separado do FastAPI por `python -m app.publisher` ou
+`scripts/start-publisher.sh`. As variáveis, timeouts, lote, lease, polling e retry
+limitado estão em `.env.example`; `SQS_ENDPOINT_URL` é permitido apenas fora de
+produção. SIGTERM/SIGINT encerram o loop sem iniciar novo lote.
+
+A semântica é at-least-once. Envio aceito pelo SQS seguido de falha na confirmação
+PostgreSQL deixa o lease expirar e permite reenvio do mesmo `message_id`; a futura
+Inbox, não a janela de deduplicação FIFO, impedirá efeitos de negócio repetidos.
 
 ## Próxima etapa funcional
 
-A Etapa 2 ligará os contratos à comunicação real, implementará consumers idempotentes,
-Outbox/Inbox, workers e os comandos/eventos de reserva, recebimento, liberação e
-consumo. Na Etapa 1 essas integrações permanecem deliberadamente não funcionais.
+A Etapa 2 continuará com o publisher financeiro e, em checkpoints posteriores,
+consumers idempotentes, Inbox e os handlers de reserva, recebimento, liberação e
+consumo.

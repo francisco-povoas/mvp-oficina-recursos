@@ -29,11 +29,14 @@ async def test_alembic_aplica_schema_independente_desde_banco_vazio(
                     constraint["name"]
                     for constraint in inspector.get_check_constraints("outbox_message")
                 },
+                "outbox_columns": {
+                    column["name"] for column in inspector.get_columns("outbox_message")
+                },
             }
 
         schema = await connection.run_sync(inspect_schema)
 
-    assert revision == "20261108_02_outbox"
+    assert revision == "20261108_03_outbox_saga"
     assert schema["tables"] == {
         "alembic_version",
         "catalogo_servico",
@@ -59,6 +62,7 @@ async def test_alembic_aplica_schema_independente_desde_banco_vazio(
         "ck_outbox_claim_expiracao_valida",
         "ck_outbox_falha_com_erro",
     } <= schema["outbox_checks"]
+    assert "saga_id" in schema["outbox_columns"]
 
 
 async def test_schema_nao_possui_tabelas_orm_ou_fk_para_ordens(

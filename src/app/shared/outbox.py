@@ -19,6 +19,7 @@ class OutboxMessage:
     correlation_id: UUID
     occurred_at: datetime
     causation_id: UUID | None = None
+    saga_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,7 @@ class ClaimedOutboxMessage:
     payload: dict[str, object]
     correlation_id: UUID
     causation_id: UUID | None
+    saga_id: UUID | None
     occurred_at: datetime
     attempts: int
     claim_id: UUID
@@ -54,6 +56,7 @@ class OutboxRepository(Protocol):
         worker_id: str,
         batch_size: int,
         lease_duration: timedelta,
+        max_attempts: int | None = None,
         now: datetime | None = None,
     ) -> list[ClaimedOutboxMessage]: ...
 

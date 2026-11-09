@@ -59,6 +59,7 @@ class PostgresOutboxRepository:
                 payload=payload,
                 correlation_id=message.correlation_id,
                 causation_id=message.causation_id,
+                saga_id=message.saga_id,
                 occurred_at=message.occurred_at,
                 published_at=None,
                 attempts=0,
@@ -72,6 +73,7 @@ class PostgresOutboxRepository:
         worker_id: str,
         batch_size: int,
         lease_duration: timedelta,
+        max_attempts: int | None = None,
         now: datetime | None = None,
     ) -> list[ClaimedOutboxMessage]:
         if not worker_id.strip():
@@ -80,20 +82,26 @@ class PostgresOutboxRepository:
             raise ValueError("batch_size deve ser positivo")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration deve ser positivo")
+        if max_attempts is not None and max_attempts <= 0:
+            raise ValueError("max_attempts deve ser positivo")
         claimed_at = now or _utc_now()
         _require_aware(claimed_at, "now")
         claim_expires_at = claimed_at + lease_duration
 
+        conditions = [
+            OutboxMessageModel.published_at.is_(None),
+            OutboxMessageModel.next_attempt_at <= claimed_at,
+            or_(
+                OutboxMessageModel.claim_id.is_(None),
+                OutboxMessageModel.claim_expires_at <= claimed_at,
+            ),
+        ]
+        if max_attempts is not None:
+            conditions.append(OutboxMessageModel.attempts < max_attempts)
+
         statement = (
             select(OutboxMessageModel)
-            .where(
-                OutboxMessageModel.published_at.is_(None),
-                OutboxMessageModel.next_attempt_at <= claimed_at,
-                or_(
-                    OutboxMessageModel.claim_id.is_(None),
-                    OutboxMessageModel.claim_expires_at <= claimed_at,
-                ),
-            )
+            .where(*conditions)
             .order_by(
                 OutboxMessageModel.next_attempt_at,
                 OutboxMessageModel.occurred_at,
@@ -197,6 +205,7 @@ class PostgresOutboxRepository:
             payload=json.loads(row.payload),
             correlation_id=row.correlation_id,
             causation_id=row.causation_id,
+            saga_id=row.saga_id,
             occurred_at=row.occurred_at,
             attempts=row.attempts,
             claim_id=row.claim_id,

@@ -268,3 +268,22 @@ async def test_falha_retry_e_confirmacao_preservam_auditoria(
     assert stored.last_error == "SQS indisponivel"
     assert stored.last_failed_at == now + timedelta(seconds=1)
     assert stored.claim_id is None
+
+
+async def test_claim_respeita_limite_de_tentativas(db_engine: AsyncEngine) -> None:
+    now = datetime.now(UTC)
+    [message] = await _persist_messages(db_engine, count=1, occurred_at=now)
+    factory = _factory(db_engine)
+    async with factory() as session:
+        stored = await session.get(OutboxMessageModel, message.message_id)
+        assert stored is not None
+        stored.attempts = 8
+        await session.commit()
+    async with factory() as session:
+        assert not await PostgresOutboxRepository(session).claim_pending(
+            worker_id="recursos-limitado",
+            batch_size=1,
+            lease_duration=timedelta(seconds=30),
+            max_attempts=8,
+            now=now + timedelta(minutes=1),
+        )
