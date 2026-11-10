@@ -39,7 +39,10 @@ class StockCommandHandler:
     async def handle(
         self, envelope: Mapping[str, object], session: AsyncSession
     ) -> None:
-        handlers = {"ReserveItem": self._reserve_item}
+        handlers = {
+            "ReserveItem": self._reserve_item,
+            "ReleaseReservation": self._release_reservation,
+        }
         message_type = str(envelope["message_type"])
         handler = handlers.get(message_type)
         if handler is None:
@@ -139,6 +142,63 @@ class StockCommandHandler:
             occurred_at=now,
         )
 
+    async def _release_reservation(
+        self, envelope: Mapping[str, object], session: AsyncSession
+    ) -> None:
+        payload = self._payload(envelope)
+        operation_id = self._uuid(envelope, "operation_id")
+        raw_reservation_id = payload.get("reservation_id")
+        reservation_id = (
+            UUID(str(raw_reservation_id)) if raw_reservation_id else operation_id
+        )
+        resource_id = self._uuid(payload, "resource_id")
+        quantity = self._quantity(payload)
+        reservation_repo = ReservaRepo(session)
+        reservation = await reservation_repo.obter_por_id_com_lock(reservation_id)
+        if reservation is None:
+            raise StockCommandError("reserva a liberar nao encontrada")
+        self._require_matching_reservation(
+            reservation,
+            resource_id=resource_id,
+            quantity=quantity,
+        )
+
+        now = self.clock()
+        if reservation.status is StatusReserva.RESERVADA:
+            item_repo = ItemEstoqueRepo(session)
+            item = await item_repo.obter_por_id_com_lock(ID(resource_id))
+            if item is None:
+                raise StockCommandError("item da reserva nao encontrado")
+            if item.quantidade_reservada < quantity:
+                raise StockCommandError("saldo reservado insuficiente para liberacao")
+            await item_repo.atualizar(
+                replace(
+                    item,
+                    quantidade_disponivel=item.quantidade_disponivel + quantity,
+                    quantidade_reservada=item.quantidade_reservada - quantity,
+                    atualizado_em=now,
+                )
+            )
+            reservation = reservation.liberar()
+            await reservation_repo.atualizar(reservation)
+        elif reservation.status is not StatusReserva.LIBERADA:
+            raise StockCommandError(
+                f"reserva em estado {reservation.status.value} nao pode ser liberada"
+            )
+
+        await self._add_result(
+            envelope,
+            PostgresOutboxRepository(session),
+            event_type="ReservationReleased.v1",
+            payload={
+                "reservation_id": str(reservation.operation_id),
+                "resource_id": str(resource_id),
+                "quantity": quantity,
+                "released_at": self._timestamp(now),
+            },
+            occurred_at=now,
+        )
+
     async def _add_result(
         self,
         envelope: Mapping[str, object],
@@ -193,3 +253,15 @@ class StockCommandHandler:
     @staticmethod
     def _money(value: Decimal) -> str:
         return f"{value:.2f}"
+
+    @staticmethod
+    def _require_matching_reservation(
+        reservation: Reserva,
+        *,
+        resource_id: UUID,
+        quantity: int,
+    ) -> None:
+        if reservation.item_estoque_id != resource_id:
+            raise StockCommandError("resource_id diverge da reserva")
+        if reservation.quantidade != quantity:
+            raise StockCommandError("quantity diverge da reserva")

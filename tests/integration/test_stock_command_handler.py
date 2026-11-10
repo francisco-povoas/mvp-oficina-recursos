@@ -90,6 +90,31 @@ def reserve_envelope(
     }
 
 
+def release_envelope(
+    reservation_id: UUID,
+    resource_id: UUID,
+    *,
+    quantity: int = 2,
+    operation_id: UUID | None = None,
+) -> dict[str, object]:
+    return {
+        "message_id": str(uuid4()),
+        "message_type": "ReleaseReservation",
+        "message_version": 1,
+        "occurred_at": "2026-11-10T13:00:00Z",
+        "correlation_id": str(uuid4()),
+        "causation_id": str(uuid4()),
+        "operation_id": str(operation_id or uuid4()),
+        "saga_id": str(uuid4()),
+        "payload": {
+            "reservation_id": str(reservation_id),
+            "resource_id": str(resource_id),
+            "quantity": quantity,
+            "reason": "PENDING_CANCELLATION",
+        },
+    }
+
+
 def processor(engine: AsyncEngine, handler=None) -> PostgresInboxProcessor:
     return PostgresInboxProcessor(
         factory(engine),
@@ -303,3 +328,125 @@ async def test_falha_reverte_estoque_reserva_outbox_inbox_e_retry_recupera(
     assert await processor(db_engine).process(value, receive_count=2) is ProcessingOutcome.PROCESSED
     async with factory(db_engine)() as session:
         assert await session.scalar(sa.select(sa.func.count()).select_from(OutboxMessageModel)) == 1
+
+
+async def test_liberacao_normal_devolve_saldo_e_publica_resultado_valido(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=5)
+    reserve = reserve_envelope(resource_id, quantity=2)
+    await processor(db_engine).process(reserve, receive_count=1)
+    release = release_envelope(
+        UUID(str(reserve["operation_id"])),
+        resource_id,
+        quantity=2,
+    )
+    JsonSchemaMessageValidator(SCHEMA).validate(release)
+
+    assert await processor(db_engine).process(release, receive_count=1) is ProcessingOutcome.PROCESSED
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        reservation = await session.get(ReservaModel, UUID(str(reserve["operation_id"])))
+        outboxes = list(
+            (
+                await session.exec(
+                    select(OutboxMessageModel).order_by(OutboxMessageModel.occurred_at)
+                )
+            ).all()
+        )
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (5, 0)
+    assert reservation.status == "LIBERADA"
+    assert [record.event_type for record in outboxes] == [
+        "ResourceReserved.v1",
+        "ReservationReleased.v1",
+    ]
+    result = validate_outbox(outboxes[-1])
+    assert result["operation_id"] == release["operation_id"]
+    assert result["payload"]["reservation_id"] == reserve["operation_id"]
+
+
+async def test_liberacao_repetida_com_mesma_operacao_nao_incrementa_saldo_novamente(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=4, reserved=0)
+    reserve = reserve_envelope(resource_id, quantity=3)
+    await processor(db_engine).process(reserve, receive_count=1)
+    release = release_envelope(UUID(str(reserve["operation_id"])), resource_id, quantity=3)
+    redelivery = deepcopy(release)
+    redelivery["message_id"] = str(uuid4())
+    redelivery["correlation_id"] = str(uuid4())
+    command_processor = processor(db_engine)
+
+    assert await command_processor.process(release, receive_count=1) is ProcessingOutcome.PROCESSED
+    assert await command_processor.process(redelivery, receive_count=2) is ProcessingOutcome.DUPLICATE
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        release_results = list(
+            (
+                await session.exec(
+                    select(OutboxMessageModel).where(
+                        OutboxMessageModel.event_type == "ReservationReleased.v1"
+                    )
+                )
+            ).all()
+        )
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (4, 0)
+    assert len(release_results) == 1
+
+
+async def test_nova_operacao_sobre_reserva_ja_liberada_retorna_resultado_sem_efeito(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=6)
+    reserve = reserve_envelope(resource_id, quantity=2)
+    await processor(db_engine).process(reserve, receive_count=1)
+    first = release_envelope(UUID(str(reserve["operation_id"])), resource_id, quantity=2)
+    second = release_envelope(UUID(str(reserve["operation_id"])), resource_id, quantity=2)
+
+    await processor(db_engine).process(first, receive_count=1)
+    await processor(db_engine).process(second, receive_count=1)
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        results = list(
+            (
+                await session.exec(
+                    select(OutboxMessageModel).where(
+                        OutboxMessageModel.event_type == "ReservationReleased.v1"
+                    )
+                )
+            ).all()
+        )
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (6, 0)
+    assert len(results) == 2
+
+
+async def test_backorder_nao_e_convertido_em_liberacao_fisica(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=1)
+    reserve = reserve_envelope(resource_id, quantity=2)
+    await processor(db_engine).process(reserve, receive_count=1)
+    release = release_envelope(UUID(str(reserve["operation_id"])), resource_id, quantity=2)
+
+    try:
+        await processor(db_engine).process(release, receive_count=1)
+    except RuntimeError as exc:
+        assert "SEM_ESTOQUE" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("backorder nao deve ser confirmado como liberacao")
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        reservation = await session.get(ReservaModel, UUID(str(reserve["operation_id"])))
+        release_count = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(OutboxMessageModel)
+            .where(OutboxMessageModel.event_type == "ReservationReleased.v1")
+        )
+        release_inbox = await session.get(InboxMessageModel, (CONSUMER, release["message_id"]))
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (1, 0)
+    assert reservation.status == "SEM_ESTOQUE"
+    assert release_count == 0 and release_inbox is None
