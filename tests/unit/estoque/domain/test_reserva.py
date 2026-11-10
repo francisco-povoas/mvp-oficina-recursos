@@ -44,3 +44,14 @@ def test_reserva_confirmada_pode_ser_liberada_ou_consumida() -> None:
 
     assert reserva.liberar().status == StatusReserva.LIBERADA
     assert reserva.consumir().status == StatusReserva.CONSUMIDA
+
+
+def test_backorder_recebido_passa_a_reservado() -> None:
+    reserva = criar_reserva(quantidade=3).reservar(2)
+
+    assert reserva.receber_backorder().status == StatusReserva.RESERVADA
+
+
+def test_reserva_ja_confirmada_nao_pode_receber_backorder() -> None:
+    with pytest.raises(ItemEstoqueInvalidoError):
+        criar_reserva().reservar(10).receber_backorder()

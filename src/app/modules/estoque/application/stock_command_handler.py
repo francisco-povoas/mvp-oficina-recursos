@@ -42,6 +42,7 @@ class StockCommandHandler:
         handlers = {
             "ReserveItem": self._reserve_item,
             "ReleaseReservation": self._release_reservation,
+            "ReceiveBackorderedItem": self._receive_backordered_item,
         }
         message_type = str(envelope["message_type"])
         handler = handlers.get(message_type)
@@ -195,6 +196,63 @@ class StockCommandHandler:
                 "resource_id": str(resource_id),
                 "quantity": quantity,
                 "released_at": self._timestamp(now),
+            },
+            occurred_at=now,
+        )
+
+    async def _receive_backordered_item(
+        self, envelope: Mapping[str, object], session: AsyncSession
+    ) -> None:
+        payload = self._payload(envelope)
+        resource_id = self._uuid(payload, "resource_id")
+        quantity = self._quantity(payload)
+        if quantity < 1 or quantity > MAX_QUANTITY:
+            raise StockCommandError("quantity fora do intervalo suportado")
+
+        reservation_repo = ReservaRepo(session)
+        reservation = await reservation_repo.obter_por_item_da_ordem_com_lock(
+            ordem_servico_id=self._uuid(payload, "order_id"),
+            ordem_servico_item_id=self._uuid(payload, "order_item_id"),
+            item_estoque_id=resource_id,
+        )
+        if reservation is None:
+            raise StockCommandError("backorder a receber nao encontrado")
+        self._require_matching_reservation(
+            reservation,
+            resource_id=resource_id,
+            quantity=quantity,
+        )
+        if reservation.status is not StatusReserva.SEM_ESTOQUE:
+            raise StockCommandError(
+                f"reserva em estado {reservation.status.value} nao pode receber backorder"
+            )
+
+        item_repo = ItemEstoqueRepo(session)
+        item = await item_repo.obter_por_id_com_lock(ID(resource_id))
+        if item is None:
+            raise StockCommandError("item do backorder nao encontrado")
+        if item.quantidade_reservada > MAX_QUANTITY - quantity:
+            raise StockCommandError("saldo reservado excederia o limite suportado")
+
+        now = self.clock()
+        await item_repo.atualizar(
+            replace(
+                item,
+                quantidade_reservada=item.quantidade_reservada + quantity,
+                atualizado_em=now,
+            )
+        )
+        reservation = reservation.receber_backorder()
+        await reservation_repo.atualizar(reservation)
+        await self._add_result(
+            envelope,
+            PostgresOutboxRepository(session),
+            event_type="BackorderedItemReceived.v1",
+            payload={
+                "reservation_id": str(reservation.operation_id),
+                "resource_id": str(resource_id),
+                "quantity": quantity,
+                "received_at": self._timestamp(now),
             },
             occurred_at=now,
         )

@@ -115,6 +115,26 @@ def release_envelope(
     }
 
 
+def receive_envelope(reserve: dict[str, object]) -> dict[str, object]:
+    reserve_payload = reserve["payload"]
+    return {
+        "message_id": str(uuid4()),
+        "message_type": "ReceiveBackorderedItem",
+        "message_version": 1,
+        "occurred_at": "2026-11-10T14:00:00Z",
+        "correlation_id": str(uuid4()),
+        "causation_id": None,
+        "operation_id": str(uuid4()),
+        "saga_id": None,
+        "payload": {
+            "order_id": reserve_payload["order_id"],
+            "order_item_id": reserve_payload["order_item_id"],
+            "resource_id": reserve_payload["resource_id"],
+            "quantity": reserve_payload["quantity"],
+        },
+    }
+
+
 def processor(engine: AsyncEngine, handler=None) -> PostgresInboxProcessor:
     return PostgresInboxProcessor(
         factory(engine),
@@ -450,3 +470,88 @@ async def test_backorder_nao_e_convertido_em_liberacao_fisica(
     assert (item.quantidade_disponivel, item.quantidade_reservada) == (1, 0)
     assert reservation.status == "SEM_ESTOQUE"
     assert release_count == 0 and release_inbox is None
+
+
+async def test_recebimento_de_backorder_incrementa_diretamente_saldo_reservado(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=1, reserved=3)
+    reserve = reserve_envelope(resource_id, quantity=2)
+    await processor(db_engine).process(reserve, receive_count=1)
+    receive = receive_envelope(reserve)
+    JsonSchemaMessageValidator(SCHEMA).validate(receive)
+
+    assert await processor(db_engine).process(receive, receive_count=1) is ProcessingOutcome.PROCESSED
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        reservation = await session.get(ReservaModel, UUID(str(reserve["operation_id"])))
+        received = (
+            await session.exec(
+                select(OutboxMessageModel).where(
+                    OutboxMessageModel.event_type == "BackorderedItemReceived.v1"
+                )
+            )
+        ).one()
+    assert item.quantidade_disponivel == 1
+    assert item.quantidade_reservada == 5
+    assert reservation.status == "RESERVADA"
+    result = validate_outbox(received)
+    assert result["operation_id"] == receive["operation_id"]
+    assert result["payload"]["reservation_id"] == reserve["operation_id"]
+
+
+async def test_recebimento_repetido_na_mesma_operacao_nao_incrementa_reservado(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=0, reserved=1)
+    reserve = reserve_envelope(resource_id, quantity=2)
+    await processor(db_engine).process(reserve, receive_count=1)
+    receive = receive_envelope(reserve)
+    redelivery = deepcopy(receive)
+    redelivery["message_id"] = str(uuid4())
+    redelivery["correlation_id"] = str(uuid4())
+    command_processor = processor(db_engine)
+
+    assert await command_processor.process(receive, receive_count=1) is ProcessingOutcome.PROCESSED
+    assert await command_processor.process(redelivery, receive_count=2) is ProcessingOutcome.DUPLICATE
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        results = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(OutboxMessageModel)
+            .where(OutboxMessageModel.event_type == "BackorderedItemReceived.v1")
+        )
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (0, 3)
+    assert results == 1
+
+
+async def test_recebimento_com_quantidade_divergente_faz_rollback_sem_efeito(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=1, reserved=2)
+    reserve = reserve_envelope(resource_id, quantity=3)
+    await processor(db_engine).process(reserve, receive_count=1)
+    receive = receive_envelope(reserve)
+    receive["payload"]["quantity"] = 2
+
+    try:
+        await processor(db_engine).process(receive, receive_count=1)
+    except RuntimeError as exc:
+        assert "quantity diverge" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("recebimento divergente deveria falhar")
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        reservation = await session.get(ReservaModel, UUID(str(reserve["operation_id"])))
+        received_count = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(OutboxMessageModel)
+            .where(OutboxMessageModel.event_type == "BackorderedItemReceived.v1")
+        )
+        inbox = await session.get(InboxMessageModel, (CONSUMER, receive["message_id"]))
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (1, 2)
+    assert reservation.status == "SEM_ESTOQUE"
+    assert received_count == 0 and inbox is None

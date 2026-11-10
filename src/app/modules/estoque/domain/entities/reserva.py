@@ -46,6 +46,13 @@ class Reserva:
             raise ItemEstoqueInvalidoError("Somente uma reserva confirmada pode ser liberada.")
         return replace(self, status=StatusReserva.LIBERADA, atualizado_em=datetime.now(UTC))
 
+    def receber_backorder(self) -> "Reserva":
+        if self.status != StatusReserva.SEM_ESTOQUE:
+            raise ItemEstoqueInvalidoError(
+                "Somente uma reserva sem estoque pode receber o item pendente."
+            )
+        return replace(self, status=StatusReserva.RESERVADA, atualizado_em=datetime.now(UTC))
+
     def consumir(self) -> "Reserva":
         if self.status != StatusReserva.RESERVADA:
             raise ItemEstoqueInvalidoError("Somente uma reserva confirmada pode ser consumida.")
