@@ -135,6 +135,27 @@ def receive_envelope(reserve: dict[str, object]) -> dict[str, object]:
     }
 
 
+def consume_envelope(reserve: dict[str, object]) -> dict[str, object]:
+    reserve_payload = reserve["payload"]
+    return {
+        "message_id": str(uuid4()),
+        "message_type": "ConsumeReservation",
+        "message_version": 1,
+        "occurred_at": "2026-11-10T15:00:00Z",
+        "correlation_id": str(uuid4()),
+        "causation_id": None,
+        "operation_id": str(uuid4()),
+        "saga_id": None,
+        "payload": {
+            "order_id": reserve_payload["order_id"],
+            "order_item_id": reserve_payload["order_item_id"],
+            "reservation_id": reserve["operation_id"],
+            "resource_id": reserve_payload["resource_id"],
+            "quantity": reserve_payload["quantity"],
+        },
+    }
+
+
 def processor(engine: AsyncEngine, handler=None) -> PostgresInboxProcessor:
     return PostgresInboxProcessor(
         factory(engine),
@@ -555,3 +576,110 @@ async def test_recebimento_com_quantidade_divergente_faz_rollback_sem_efeito(
     assert (item.quantidade_disponivel, item.quantidade_reservada) == (1, 2)
     assert reservation.status == "SEM_ESTOQUE"
     assert received_count == 0 and inbox is None
+
+
+async def test_consumo_reduz_saldo_reservado_sem_alterar_disponivel(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=6, reserved=1)
+    reserve = reserve_envelope(resource_id, quantity=3)
+    await processor(db_engine).process(reserve, receive_count=1)
+    consume = consume_envelope(reserve)
+    JsonSchemaMessageValidator(SCHEMA).validate(consume)
+
+    assert await processor(db_engine).process(consume, receive_count=1) is ProcessingOutcome.PROCESSED
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        reservation = await session.get(ReservaModel, UUID(str(reserve["operation_id"])))
+        consumed = (
+            await session.exec(
+                select(OutboxMessageModel).where(
+                    OutboxMessageModel.event_type == "ReservationConsumed.v1"
+                )
+            )
+        ).one()
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (3, 1)
+    assert reservation.status == "CONSUMIDA"
+    result = validate_outbox(consumed)
+    assert result["operation_id"] == consume["operation_id"]
+    assert result["payload"]["reservation_id"] == reserve["operation_id"]
+
+
+async def test_consumo_repetido_na_mesma_operacao_nao_debita_novamente(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=5, reserved=0)
+    reserve = reserve_envelope(resource_id, quantity=2)
+    await processor(db_engine).process(reserve, receive_count=1)
+    consume = consume_envelope(reserve)
+    redelivery = deepcopy(consume)
+    redelivery["message_id"] = str(uuid4())
+    redelivery["correlation_id"] = str(uuid4())
+    command_processor = processor(db_engine)
+
+    assert await command_processor.process(consume, receive_count=1) is ProcessingOutcome.PROCESSED
+    assert await command_processor.process(redelivery, receive_count=2) is ProcessingOutcome.DUPLICATE
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        results = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(OutboxMessageModel)
+            .where(OutboxMessageModel.event_type == "ReservationConsumed.v1")
+        )
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (3, 0)
+    assert results == 1
+
+
+async def test_nova_operacao_sobre_reserva_consumida_nao_debita_novamente(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=7, reserved=0)
+    reserve = reserve_envelope(resource_id, quantity=2)
+    await processor(db_engine).process(reserve, receive_count=1)
+    first = consume_envelope(reserve)
+    second = consume_envelope(reserve)
+
+    await processor(db_engine).process(first, receive_count=1)
+    await processor(db_engine).process(second, receive_count=1)
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        results = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(OutboxMessageModel)
+            .where(OutboxMessageModel.event_type == "ReservationConsumed.v1")
+        )
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (5, 0)
+    assert results == 2
+
+
+async def test_consumo_com_item_da_ordem_divergente_faz_rollback(
+    db_engine: AsyncEngine,
+) -> None:
+    resource_id = await save_item(db_engine, available=4, reserved=0)
+    reserve = reserve_envelope(resource_id, quantity=2)
+    await processor(db_engine).process(reserve, receive_count=1)
+    consume = consume_envelope(reserve)
+    consume["payload"]["order_item_id"] = str(uuid4())
+
+    try:
+        await processor(db_engine).process(consume, receive_count=1)
+    except RuntimeError as exc:
+        assert "order_item_id diverge" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("consumo divergente deveria falhar")
+
+    async with factory(db_engine)() as session:
+        item = await session.get(ItemEstoqueModel, resource_id)
+        reservation = await session.get(ReservaModel, UUID(str(reserve["operation_id"])))
+        result_count = await session.scalar(
+            sa.select(sa.func.count())
+            .select_from(OutboxMessageModel)
+            .where(OutboxMessageModel.event_type == "ReservationConsumed.v1")
+        )
+        inbox = await session.get(InboxMessageModel, (CONSUMER, consume["message_id"]))
+    assert (item.quantidade_disponivel, item.quantidade_reservada) == (2, 2)
+    assert reservation.status == "RESERVADA"
+    assert result_count == 0 and inbox is None
