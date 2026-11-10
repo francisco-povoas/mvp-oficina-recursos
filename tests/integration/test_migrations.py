@@ -22,6 +22,10 @@ async def test_alembic_aplica_schema_independente_desde_banco_vazio(
                 },
                 "reservation_fks": inspector.get_foreign_keys("reserva_estoque"),
                 "reservation_pk": inspector.get_pk_constraint("reserva_estoque"),
+                "reservation_uniques": {
+                    constraint["name"]
+                    for constraint in inspector.get_unique_constraints("reserva_estoque")
+                },
                 "outbox_indexes": {
                     index["name"] for index in inspector.get_indexes("outbox_message")
                 },
@@ -47,7 +51,7 @@ async def test_alembic_aplica_schema_independente_desde_banco_vazio(
 
         schema = await connection.run_sync(inspect_schema)
 
-    assert revision == "20261109_04_inbox"
+    assert revision == "20261110_05_reserva_order_item"
     assert schema["tables"] == {
         "alembic_version",
         "catalogo_servico",
@@ -68,6 +72,7 @@ async def test_alembic_aplica_schema_independente_desde_banco_vazio(
         "ck_reserva_status_valido",
     } <= schema["reservation_checks"]
     assert schema["reservation_pk"]["constrained_columns"] == ["operation_id"]
+    assert "uq_reserva_ordem_servico_item" in schema["reservation_uniques"]
     assert {fk["referred_table"] for fk in schema["reservation_fks"]} == {"item_estoque"}
     assert {"ix_outbox_pending", "ix_outbox_claimable"} <= schema["outbox_indexes"]
     assert {

@@ -20,6 +20,7 @@ class Reserva:
 
     operation_id: UUID
     ordem_servico_id: UUID
+    ordem_servico_item_id: UUID
     item_estoque_id: UUID
     quantidade: int
     status: StatusReserva

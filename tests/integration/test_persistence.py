@@ -117,6 +117,7 @@ async def test_reserva_e_unica_por_operation_id_e_preserva_payload(
             ReservaModel(
                 operation_id=operation_id,
                 ordem_servico_id=order_id,
+                ordem_servico_item_id=uuid4(),
                 item_estoque_id=item.id.value,
                 quantidade=3,
                 status="RESERVADA",
@@ -138,6 +139,7 @@ async def test_reserva_e_unica_por_operation_id_e_preserva_payload(
             ReservaModel(
                 operation_id=operation_id,
                 ordem_servico_id=order_id,
+                ordem_servico_item_id=uuid4(),
                 item_estoque_id=item.id.value,
                 quantidade=3,
                 status="RESERVADA",
@@ -168,6 +170,7 @@ async def test_reserva_respeita_constraints_de_quantidade_e_estado(
             ReservaModel(
                 operation_id=uuid4(),
                 ordem_servico_id=uuid4(),
+                ordem_servico_item_id=uuid4(),
                 item_estoque_id=item.id.value,
                 quantidade=quantidade,
                 status=status,

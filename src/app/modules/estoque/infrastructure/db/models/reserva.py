@@ -17,6 +17,7 @@ class ReservaModel(SQLModel, table=True):
 
     operation_id: UUID = Field(primary_key=True)
     ordem_servico_id: UUID = Field(index=True, nullable=False)
+    ordem_servico_item_id: UUID = Field(unique=True, nullable=False)
     item_estoque_id: UUID = Field(foreign_key="item_estoque.id", index=True, nullable=False)
     quantidade: int = Field(sa_column=sa.Column(sa.Integer, nullable=False))
     status: str = Field(sa_column=sa.Column(sa.String(20), nullable=False))

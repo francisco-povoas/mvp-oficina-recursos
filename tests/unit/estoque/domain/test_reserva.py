@@ -12,6 +12,7 @@ def criar_reserva(*, quantidade: int = 2) -> Reserva:
     return Reserva(
         operation_id=uuid4(),
         ordem_servico_id=uuid4(),
+        ordem_servico_item_id=uuid4(),
         item_estoque_id=uuid4(),
         quantidade=quantidade,
         status=StatusReserva.PENDENTE,
