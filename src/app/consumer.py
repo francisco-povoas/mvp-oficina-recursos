@@ -10,6 +10,7 @@ from app.infrastructure.messaging.contracts import JsonSchemaMessageValidator
 from app.infrastructure.messaging.inbox import PostgresInboxProcessor, TransactionalMessageHandler
 from app.infrastructure.messaging.sqs import create_sqs_client
 from app.infrastructure.messaging.sqs_consumer import SqsConsumerTransport
+from app.modules.estoque.application.stock_command_handler import StockCommandHandler
 from app.shared.infra.db import dispose_engine, get_session_factory
 
 CONSUMER_NAME = "recursos.commands.v1"
@@ -43,13 +44,7 @@ async def run_consumer(
         except NotImplementedError:  # pragma: no cover
             signal.signal(signal_number, lambda *_: request_shutdown())
 
-    # O Checkpoint D entrega o worker e o port transacional, mas nao antecipa handlers
-    # do Checkpoint E. Sem handler, o processo permanece saudavel e nao drena a fila.
-    if handler is None:
-        logger.warning("inbox_consumer_paused_business_handlers_not_installed")
-        await stop_event.wait()
-        await dispose_engine()
-        return
+    transactional_handler = handler or StockCommandHandler()
 
     client = create_sqs_client(
         region=resolved.aws_region,
@@ -65,7 +60,7 @@ async def run_consumer(
         processor=PostgresInboxProcessor(
             get_session_factory(),
             consumer_name=CONSUMER_NAME,
-            handler=handler,
+            handler=transactional_handler,
         ),
         transport=transport,
         policy=ConsumerPolicy(

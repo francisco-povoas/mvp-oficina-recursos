@@ -19,8 +19,9 @@ para reservar, receber, liberar e consumir recursos.
 A Outbox transacional e o publisher independente da Etapa 2 estão ativos. O publisher
 usa claim com lease e `FOR UPDATE SKIP LOCKED`, valida o schema v1 consumido de Ordens
 e publica os seis resultados aprovados na FIFO de Ordens. O Checkpoint D acrescenta o
-consumer técnico Ordens→Recursos e a Inbox PostgreSQL persistente; handlers funcionais
-de reserva, recebimento, liberação e consumo continuam reservados ao Checkpoint E.
+consumer Ordens→Recursos e a Inbox PostgreSQL persistente. Os quatro handlers
+funcionais de reserva, recebimento, liberação e consumo estão registrados na composição
+padrão e produzem os resultados aprovados pela Outbox transacional.
 
 ## APIs e contratos internos
 
@@ -30,9 +31,9 @@ define consultas internas de catálogo e resultado de operação, além dos sche
 de correlação e erro.
 
 Os endpoints distribuídos ainda planejados retornam explicitamente `501
-INTEGRATION_PLANNED`; contrato não equivale a integração ativa. O publisher apenas
-envia eventos já persistidos na Outbox. O consumer valida envelopes e tipos da fila,
-mas não confirma mensagens sem um handler transacional injetado.
+INTEGRATION_PLANNED`; contrato não equivale a integração REST ativa. As operações de
+estoque assíncronas usam o consumer funcional, e o publisher envia os resultados já
+persistidos na Outbox.
 
 ## Estrutura
 
@@ -94,6 +95,6 @@ nova com a mesma operação e payload não repete o efeito; payload divergente �
 e segue o redrive/DLQ.
 
 O handler recebe a mesma sessão PostgreSQL da Inbox, portanto efeito local, eventual
-Outbox de resposta e conclusão da Inbox podem ser confirmados atomicamente. Até o
-Checkpoint E instalar os handlers de negócio, o processo permanece pausado e não drena
-a fila. Isso preserva comandos reais sem simular sucesso ou antecipar a Saga.
+Outbox de resposta e conclusão da Inbox são confirmados atomicamente. Tipos não
+aprovados, contrato inválido, conflito de idempotência ou falha técnica permanecem sem
+ACK e seguem retry/redrive; não são convertidos em sucesso ou rejeição de negócio.
