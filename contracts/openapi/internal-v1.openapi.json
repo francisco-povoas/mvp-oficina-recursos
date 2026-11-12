@@ -30,7 +30,7 @@
     "/catalog/resources/{resource_id}": {
       "get": {
         "operationId": "getResourceSnapshot",
-        "x-implementation-status": "planned-stage-2",
+        "x-implementation-status": "implemented-stage-2-rest",
         "x-required-scopes": ["resources:catalog:read"],
         "security": [{"serviceBearer": []}],
         "parameters": [
@@ -43,8 +43,7 @@
           "403": {"$ref": "#/components/responses/Forbidden"},
           "404": {"$ref": "#/components/responses/NotFound"},
           "422": {"$ref": "#/components/responses/ValidationError"},
-          "500": {"$ref": "#/components/responses/InternalError"},
-          "501": {"$ref": "#/components/responses/Planned"}
+          "500": {"$ref": "#/components/responses/InternalError"}
         }
       }
     },

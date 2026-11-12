@@ -1,12 +1,14 @@
 # Contratos versionados de Recursos
 
-- `openapi/internal-v1.openapi.json`: snapshot de serviço implementado na frente REST da Etapa 2; snapshot de recurso e consulta de operação permanecem planejados.
+- `openapi/internal-v1.openapi.json`: snapshots de serviço e recurso implementados na frente REST da Etapa 2; consulta de operação permanece planejada.
 - `common/`: envelope e erro HTTP v1.
 - `vendor/ordens/saga-stock.v1.schema.json`: cópia semântica imutável do contrato
   produzido por Ordens e fixado na Infra. Recursos a empacota para validar seu próprio
   publisher sem importar código ou acessar outro checkout em runtime.
 
-Os endpoints estão protegidos por audiência e escopo. Somente a consulta de serviço do catálogo está funcional nesta frente; os demais continuam respondendo 501 após autenticação válida.
+Os endpoints estão protegidos por audiência e escopo. As duas consultas de catálogo
+estão funcionais; a consulta de operação continua respondendo 501 após autenticação
+válida.
 
 ## OpenAPI 1.1.0
 

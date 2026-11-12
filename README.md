@@ -30,10 +30,10 @@ token de serviço com audiência e escopo corretos. O OpenAPI versionado em `con
 define consultas internas de catálogo e resultado de operação, além dos schemas comuns
 de correlação e erro.
 
-Os endpoints distribuídos ainda planejados retornam explicitamente `501
-INTEGRATION_PLANNED`; contrato não equivale a integração REST ativa. As operações de
-estoque assíncronas usam o consumer funcional, e o publisher envia os resultados já
-persistidos na Outbox.
+Os snapshots internos de serviço e recurso estão ativos e não expõem saldos. A
+consulta de resultado de operação ainda planejada retorna explicitamente `501
+INTEGRATION_PLANNED`. As operações de estoque assíncronas usam o consumer funcional,
+e o publisher envia os resultados já persistidos na Outbox.
 
 ## Estrutura
 

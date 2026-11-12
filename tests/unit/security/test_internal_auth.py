@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+from decimal import Decimal
 from uuid import uuid4
 
 import pytest
@@ -6,11 +8,31 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from app.modules.estoque.domain.entities.item_estoque import (
+    ItemEstoque,
+    TipoItemEstoque,
+)
+from app.modules.estoque.presentation.dependencies import get_item_estoque_repo
 from app.shared.infra.api.dependencies.auth import get_usuario_autenticado
 from app.shared.infra.security.jwt import JWTProvider
+from app.shared.value_objects.id import ID
 
 SECRET = "segredo-hs256-exclusivo-dos-testes"
 CORRELATION_ID = str(uuid4())
+
+
+class _MissingResourceRepository:
+    async def obter_por_id(self, resource_id):
+        return None
+
+
+class _ResourceRepository:
+    def __init__(self, resource: ItemEstoque) -> None:
+        self.resource = resource
+
+    async def obter_por_id(self, resource_id):
+        assert resource_id == self.resource.id
+        return self.resource
 
 
 def _settings() -> Settings:
@@ -48,7 +70,9 @@ def test_internal_resources_endpoint_requires_exact_service_scope() -> None:
     )["access_token"]
     path = f"/internal/v1/catalog/resources/{uuid4()}"
 
-    with TestClient(create_app(settings)) as client:
+    app = create_app(settings)
+    app.dependency_overrides[get_item_estoque_repo] = _MissingResourceRepository
+    with TestClient(app) as client:
         headers = {"X-Correlation-ID": CORRELATION_ID}
         assert client.get(path, headers=headers).status_code == 401
         assert client.get(
@@ -62,7 +86,55 @@ def test_internal_resources_endpoint_requires_exact_service_scope() -> None:
         assert client.get(
             path,
             headers={**headers, "Authorization": f"Bearer {correct}"},
-        ).status_code == 501
+        ).status_code == 404
+
+
+def test_internal_resource_snapshot_returns_catalog_without_stock_balances() -> None:
+    settings = _settings()
+    resource_id = ID.generate()
+    now = datetime.now(UTC)
+    resource = ItemEstoque(
+        id=resource_id,
+        tipo=TipoItemEstoque.PECA,
+        nome="Filtro de óleo",
+        descricao="Filtro premium",
+        codigo="FO-001",
+        quantidade_disponivel=12,
+        quantidade_reservada=3,
+        quantidade_minima=2,
+        valor_unitario=Decimal("35.90"),
+        ativo=True,
+        criado_em=now,
+        atualizado_em=now,
+    )
+    token = _provider(settings).create_service_token(
+        client_id="mvp-oficina-ordens",
+        audience=settings.service_name,
+        scopes={"resources:catalog:read"},
+        expire_minutes=5,
+    )["access_token"]
+    app = create_app(settings)
+    app.dependency_overrides[get_item_estoque_repo] = lambda: _ResourceRepository(
+        resource
+    )
+
+    with TestClient(app) as client:
+        response = client.get(
+            f"/internal/v1/catalog/resources/{resource_id.value}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Correlation-ID": CORRELATION_ID,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "resource_id": str(resource_id.value),
+        "name": "Filtro de óleo",
+        "description": "Filtro premium",
+        "unit_price": "35.90",
+        "version": 1,
+    }
 
 
 def test_public_user_dependency_accepts_user_and_rejects_service() -> None:

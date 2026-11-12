@@ -38,7 +38,10 @@ def test_internal_openapi_is_versioned_and_marks_implementation_status() -> None
         operation = document["paths"][path][method]
         assert operation["x-required-scopes"] == EXPECTED_SCOPES[path]
         assert operation["security"] == [{"serviceBearer": []}]
-        if path == "/catalog/services/{service_id}":
+        if path in {
+            "/catalog/services/{service_id}",
+            "/catalog/resources/{resource_id}",
+        }:
             assert operation["x-implementation-status"] == "implemented-stage-2-rest"
             assert "501" not in operation["responses"]
         else:

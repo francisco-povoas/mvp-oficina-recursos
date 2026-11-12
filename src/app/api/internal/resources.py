@@ -5,6 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.modules.estoque.domain.ports.item_estoque_repo import ItemEstoqueRepo
+from app.modules.estoque.presentation.dependencies import get_item_estoque_repo
 from app.modules.servicos.domain.ports.servico_repo import ServicoRepo
 from app.modules.servicos.presentation.dependencies import get_servico_repo
 from app.shared.infra.api.dependencies.auth import RequireServiceScopes
@@ -12,6 +14,7 @@ from app.shared.value_objects.id import ID
 
 router = APIRouter()
 ServiceRepoDep = Annotated[ServicoRepo, Depends(get_servico_repo)]
+ResourceRepoDep = Annotated[ItemEstoqueRepo, Depends(get_item_estoque_repo)]
 
 
 class ServiceSnapshot(BaseModel):
@@ -23,6 +26,16 @@ class ServiceSnapshot(BaseModel):
     price: str = Field(pattern=r"^(0|[1-9][0-9]*)(\.[0-9]{2})$")
     estimated_minutes: int = Field(gt=0)
     active: bool
+    version: int = Field(default=1, ge=1)
+
+
+class ResourceSnapshot(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    resource_id: UUID
+    name: str
+    description: str | None
+    unit_price: str = Field(pattern=r"^(0|[1-9][0-9]*)(\.[0-9]{2})$")
     version: int = Field(default=1, ge=1)
 
 
@@ -72,10 +85,29 @@ async def get_service_snapshot(
 
 @router.get(
     "/catalog/resources/{resource_id}",
+    response_model=ResourceSnapshot,
     dependencies=[Depends(RequireServiceScopes("resources:catalog:read"))],
 )
-async def get_resource_snapshot(resource_id: UUID) -> None:
-    _planned(resource_id)
+async def get_resource_snapshot(
+    resource_id: UUID,
+    repository: ResourceRepoDep,
+) -> ResourceSnapshot:
+    resource = await repository.obter_por_id(ID.from_string(str(resource_id)))
+    if resource is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "code": "RESOURCE_NOT_FOUND",
+                "message": "Recurso do catálogo não encontrado",
+            },
+        )
+    return ResourceSnapshot(
+        resource_id=resource.id.value,
+        name=resource.nome,
+        description=resource.descricao,
+        unit_price=_money(resource.valor_unitario),
+        version=1,
+    )
 
 
 @router.get(
