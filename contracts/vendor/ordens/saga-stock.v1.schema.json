@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mvp-oficina/contracts/messages/saga-stock.v1.schema.json",
+  "title": "Contratos v1 da Saga e das operações distribuídas de estoque",
+  "oneOf": [
+    {"$ref": "#/$defs/ReserveItem"},
+    {"$ref": "#/$defs/ResourceReserved"},
+    {"$ref": "#/$defs/ItemBackordered"},
+    {"$ref": "#/$defs/ReservationRejected"},
+    {"$ref": "#/$defs/ReleaseReservation"},
+    {"$ref": "#/$defs/ReservationReleased"},
+    {"$ref": "#/$defs/ReceiveBackorderedItem"},
+    {"$ref": "#/$defs/BackorderedItemReceived"},
+    {"$ref": "#/$defs/ConsumeReservation"},
+    {"$ref": "#/$defs/ReservationConsumed"}
+  ],
+  "$defs": {
+    "Uuid": {"type": "string", "format": "uuid"},
+    "Timestamp": {"type": "string", "format": "date-time"},
+    "Money": {"type": "string", "pattern": "^(0|[1-9][0-9]*)(\\.[0-9]{2})$"},
+    "Envelope": {
+      "type": "object",
+      "required": [
+        "message_id", "message_type", "message_version", "occurred_at",
+        "correlation_id", "causation_id", "operation_id", "saga_id", "payload"
+      ],
+      "properties": {
+        "message_id": {"$ref": "#/$defs/Uuid"},
+        "message_type": {"type": "string"},
+        "message_version": {"const": 1},
+        "occurred_at": {"$ref": "#/$defs/Timestamp"},
+        "correlation_id": {"$ref": "#/$defs/Uuid"},
+        "causation_id": {"oneOf": [{"$ref": "#/$defs/Uuid"}, {"type": "null"}]},
+        "operation_id": {"$ref": "#/$defs/Uuid"},
+        "saga_id": {"oneOf": [{"$ref": "#/$defs/Uuid"}, {"type": "null"}]},
+        "payload": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "ResourceSnapshot": {
+      "type": "object",
+      "required": ["name", "description", "unit_price"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 200},
+        "description": {"type": ["string", "null"], "maxLength": 1000},
+        "unit_price": {"$ref": "#/$defs/Money"}
+      },
+      "additionalProperties": false
+    },
+    "ReserveItem": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ReserveItem"},
+          "saga_id": {"$ref": "#/$defs/Uuid"},
+          "payload": {
+            "type": "object",
+            "required": ["order_id", "order_item_id", "resource_id", "quantity", "resource_snapshot"],
+            "properties": {
+              "order_id": {"$ref": "#/$defs/Uuid"},
+              "order_item_id": {"$ref": "#/$defs/Uuid"},
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "quantity": {"type": "integer", "minimum": 1},
+              "resource_snapshot": {"$ref": "#/$defs/ResourceSnapshot"}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "ResourceReserved": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ResourceReserved"},
+          "saga_id": {"$ref": "#/$defs/Uuid"},
+          "payload": {
+            "type": "object",
+            "required": ["reservation_id", "resource_id", "quantity", "reserved_at", "resource_snapshot"],
+            "properties": {
+              "reservation_id": {"$ref": "#/$defs/Uuid"},
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "quantity": {"type": "integer", "minimum": 1},
+              "reserved_at": {"$ref": "#/$defs/Timestamp"},
+              "resource_snapshot": {"$ref": "#/$defs/ResourceSnapshot"}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "ItemBackordered": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ItemBackordered"},
+          "saga_id": {"$ref": "#/$defs/Uuid"},
+          "payload": {
+            "type": "object",
+            "required": ["resource_id", "requested_quantity", "available_quantity", "decided_at", "resource_snapshot"],
+            "properties": {
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "requested_quantity": {"type": "integer", "minimum": 1},
+              "available_quantity": {"type": "integer", "minimum": 0},
+              "decided_at": {"$ref": "#/$defs/Timestamp"},
+              "resource_snapshot": {"$ref": "#/$defs/ResourceSnapshot"}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "ReservationRejected": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ReservationRejected"},
+          "saga_id": {"$ref": "#/$defs/Uuid"},
+          "payload": {
+            "type": "object",
+            "required": ["resource_id", "rejection_code", "detail", "rejected_at"],
+            "properties": {
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "rejection_code": {"enum": ["RESOURCE_NOT_FOUND", "INVALID_QUANTITY"]},
+              "detail": {"type": "string", "minLength": 1, "maxLength": 512},
+              "rejected_at": {"$ref": "#/$defs/Timestamp"}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "ReleaseReservation": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ReleaseReservation"},
+          "payload": {
+            "type": "object",
+            "required": ["reservation_id", "resource_id", "quantity", "reason"],
+            "properties": {
+              "reservation_id": {"oneOf": [{"$ref": "#/$defs/Uuid"}, {"type": "null"}]},
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "quantity": {"type": "integer", "minimum": 1},
+              "reason": {"enum": ["PENDING_CANCELLATION", "ITEM_REMOVAL", "QUOTE_REJECTION"]}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "ReservationReleased": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ReservationReleased"},
+          "payload": {
+            "type": "object",
+            "required": ["reservation_id", "resource_id", "quantity", "released_at"],
+            "properties": {
+              "reservation_id": {"$ref": "#/$defs/Uuid"},
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "quantity": {"type": "integer", "minimum": 1},
+              "released_at": {"$ref": "#/$defs/Timestamp"}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "ReceiveBackorderedItem": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ReceiveBackorderedItem"},
+          "saga_id": {"type": "null"},
+          "payload": {
+            "type": "object",
+            "required": ["order_id", "order_item_id", "resource_id", "quantity"],
+            "properties": {
+              "order_id": {"$ref": "#/$defs/Uuid"},
+              "order_item_id": {"$ref": "#/$defs/Uuid"},
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "quantity": {"type": "integer", "minimum": 1}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "BackorderedItemReceived": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "BackorderedItemReceived"},
+          "saga_id": {"type": "null"},
+          "payload": {
+            "type": "object",
+            "required": ["reservation_id", "resource_id", "quantity", "received_at"],
+            "properties": {
+              "reservation_id": {"$ref": "#/$defs/Uuid"},
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "quantity": {"type": "integer", "minimum": 1},
+              "received_at": {"$ref": "#/$defs/Timestamp"}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "ConsumeReservation": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ConsumeReservation"},
+          "saga_id": {"type": "null"},
+          "payload": {
+            "type": "object",
+            "required": ["order_id", "order_item_id", "reservation_id", "resource_id", "quantity"],
+            "properties": {
+              "order_id": {"$ref": "#/$defs/Uuid"},
+              "order_item_id": {"$ref": "#/$defs/Uuid"},
+              "reservation_id": {"$ref": "#/$defs/Uuid"},
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "quantity": {"type": "integer", "minimum": 1}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    },
+    "ReservationConsumed": {
+      "allOf": [
+        {"$ref": "#/$defs/Envelope"},
+        {"properties": {
+          "message_type": {"const": "ReservationConsumed"},
+          "saga_id": {"type": "null"},
+          "payload": {
+            "type": "object",
+            "required": ["reservation_id", "resource_id", "quantity", "consumed_at"],
+            "properties": {
+              "reservation_id": {"$ref": "#/$defs/Uuid"},
+              "resource_id": {"$ref": "#/$defs/Uuid"},
+              "quantity": {"type": "integer", "minimum": 1},
+              "consumed_at": {"$ref": "#/$defs/Timestamp"}
+            },
+            "additionalProperties": false
+          }
+        }}
+      ]
+    }
+  }
+}

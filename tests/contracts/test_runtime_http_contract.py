@@ -7,6 +7,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 
 from app.config import Settings
 from app.main import create_app
+from app.modules.estoque.presentation.dependencies import get_item_estoque_repo
 from app.shared.infra.security.jwt import JWTProvider
 
 CONTRACT = json.loads(
@@ -15,6 +16,11 @@ CONTRACT = json.loads(
 PROBLEM = CONTRACT["components"]["schemas"]["Problem"]
 CORRELATION_ID = str(uuid4())
 SECRET = "segredo-hs256-exclusivo-dos-testes"
+
+
+class _MissingResourceRepository:
+    async def obter_por_id(self, resource_id):
+        return None
 
 
 def _assert_problem(response, status_code: int, correlation_id: str | None = None) -> None:
@@ -60,7 +66,9 @@ def test_authentication_authorization_validation_and_planned_responses() -> None
     )["access_token"]
     path = f"/internal/v1/catalog/resources/{uuid4()}"
 
-    with TestClient(create_app(settings)) as client:
+    app = create_app(settings)
+    app.dependency_overrides[get_item_estoque_repo] = _MissingResourceRepository
+    with TestClient(app) as client:
         unauthorized = client.get(
             path, headers={"X-Correlation-ID": CORRELATION_ID}
         )
@@ -71,7 +79,7 @@ def test_authentication_authorization_validation_and_planned_responses() -> None
                 "Authorization": f"Bearer {wrong_scope}",
             },
         )
-        planned = client.get(
+        missing = client.get(
             path,
             headers={
                 "X-Correlation-ID": CORRELATION_ID,
@@ -84,6 +92,6 @@ def test_authentication_authorization_validation_and_planned_responses() -> None
 
     _assert_problem(unauthorized, 401, CORRELATION_ID)
     _assert_problem(forbidden, 403, CORRELATION_ID)
-    _assert_problem(planned, 501, CORRELATION_ID)
+    _assert_problem(missing, 404, CORRELATION_ID)
     _assert_problem(missing_correlation, 422)
-    assert planned.json()["code"] == "INTEGRATION_PLANNED"
+    assert missing.json()["code"] == "RESOURCE_NOT_FOUND"

@@ -13,6 +13,16 @@ services:
     tmpfs:
       - /var/lib/postgresql/data
 
+  elasticmq-test:
+    image: softwaremill/elasticmq-native:1.7.1
+    volumes:
+      - ./tests/integration/elasticmq.conf:/opt/elasticmq.conf:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9324/?Action=ListQueues"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
   tests:
     build:
       context: .
@@ -23,7 +33,15 @@ services:
       DATABASE_URL: postgresql+asyncpg://recursos:recursos@db-test:5432/recursos_test
       JWT_SECRET_KEY: chave-ficticia-exclusiva-para-testes
       JWT_ALGORITHM: HS256
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: local-only-elasticmq
+      AWS_SECRET_ACCESS_KEY: local-only-elasticmq
+      SQS_ENDPOINT_URL: http://elasticmq-test:9324
+      SQS_RECURSOS_TO_ORDENS_URL: http://elasticmq-test:9324/000000000000/mvp-oficina-recursos-to-ordens-local.fifo
+      SQS_ORDENS_TO_RECURSOS_URL: http://elasticmq-test:9324/000000000000/mvp-oficina-ordens-to-recursos-local.fifo
     command: pytest --cov=src/app --cov-report=term-missing --cov-report=xml:coverage.xml
     depends_on:
       db-test:
+        condition: service_healthy
+      elasticmq-test:
         condition: service_healthy
