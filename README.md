@@ -1,100 +1,153 @@
 # MVP Oficina — Recursos
 
-Microsserviço da Fase 4 responsável pelo catálogo de serviços e pelo estoque de peças e
-insumos: saldos disponível/reservado, reservas, recebimento, liberação e consumo. Ele
-não altera ordens de serviço nem mantém agregados financeiros.
+Microsserviço responsável pelo catálogo de serviços e pelo estoque de peças e
+insumos da oficina.
 
-## Estado da Etapa 1
+## Sumário
 
-Os módulos `servicos` e `estoque` estão extraídos e organizados por `domain`,
-`application`, `infrastructure` e `presentation`. O serviço usa PostgreSQL próprio,
-SQLModel e migrations Alembic, sem banco, ORM ou entidade compartilhada com os demais
-serviços.
+- [Responsabilidades](#responsabilidades)
+- [Tecnologias e persistência](#tecnologias-e-persistência)
+- [Estoque e reservas](#estoque-e-reservas)
+- [Comunicação assíncrona](#comunicação-assíncrona)
+- [Idempotência e concorrência](#idempotência-e-concorrência)
+- [Execução local](#execução-local)
+- [Swagger](#swagger)
+- [Testes e cobertura](#testes-e-cobertura)
 
-As invariantes impedem saldos negativos. Operações de estoque que disputam o mesmo
-item usam lock pessimista (`SELECT ... FOR UPDATE`), e a reserva persistente usa
-`operation_id` como chave idempotente. O modelo cobre os estados e saldos necessários
-para reservar, receber, liberar e consumir recursos.
+## Responsabilidades
 
-A Outbox transacional e o publisher independente da Etapa 2 estão ativos. O publisher
-usa claim com lease e `FOR UPDATE SKIP LOCKED`, valida o schema v1 consumido de Ordens
-e publica os seis resultados aprovados na FIFO de Ordens. O Checkpoint D acrescenta o
-consumer Ordens→Recursos e a Inbox PostgreSQL persistente. Os quatro handlers
-funcionais de reserva, recebimento, liberação e consumo estão registrados na composição
-padrão e produzem os resultados aprovados pela Outbox transacional.
-
-## APIs e contratos internos
-
-As APIs públicas preservam os perfis locais da oficina. As rotas `/internal/v1` exigem
-token de serviço com audiência e escopo corretos. O OpenAPI versionado em `contracts/`
-define consultas internas de catálogo e resultado de operação, além dos schemas comuns
-de correlação e erro.
-
-Os snapshots internos de serviço e recurso estão ativos e não expõem saldos. A
-consulta de resultado de operação ainda planejada retorna explicitamente `501
-INTEGRATION_PLANNED`. As operações de estoque assíncronas usam o consumer funcional,
-e o publisher envia os resultados já persistidos na Outbox.
-
-## Estrutura
-
-| Caminho | Responsabilidade |
+| Contexto | Responsabilidade |
 |---|---|
-| `src/app/modules/servicos/` | catálogo de serviços em camadas de Clean Architecture |
-| `src/app/modules/estoque/` | itens, saldos, reservas e persistência transacional |
-| `alembic/` | baseline exclusivo do PostgreSQL de Recursos |
-| `contracts/` | OpenAPI e schemas versionados das interfaces internas |
-| `tests/` | testes unitários, de contratos e de integração PostgreSQL |
-| `.github/workflows/ci.yml` | Ruff, suítes com cobertura mínima de 80% e build da imagem |
+| Catálogo de serviços | cadastro, consulta, atualização, ativação e desativação |
+| Catálogo de peças | cadastro e manutenção de preço e saldo |
+| Estoque | saldos disponível e reservado, sem valores negativos |
+| Reservas | reserva por operação, liberação, recebimento de pendência e consumo |
+| Integração | consumer de comandos de Ordens, Outbox de resultados e contratos internos de catálogo |
 
-Os manifests Kubernetes específicos serão materializados somente na Etapa 4, junto da
-preparação do deployment AWS. A Etapa 1 não contém placeholders Kubernetes.
+Recursos não altera a OS nem mantém agregados de orçamento ou pagamento. Ele aplica
+as invariantes do estoque e devolve o resultado; Ordens decide o estado de seu
+próprio agregado.
 
-## Execução e validação
+## Tecnologias e persistência
 
-Requer Python 3.12. Use os arquivos `.env.example` somente como modelo e não versione
-credenciais.
+- Python 3.12, FastAPI, Pydantic e Uvicorn;
+- PostgreSQL 16, SQLModel/SQLAlchemy e Alembic;
+- boto3 com SQS FIFO ou ElasticMQ local;
+- JWT HS256 para APIs públicas e tokens de serviço para rotas internas;
+- JSON Schema, OpenTelemetry, Pytest, pytest-cov e Ruff.
+
+O PostgreSQL é exclusivo de Recursos e armazena catálogo, itens, saldos, reservas,
+resultados por operação, Outbox e Inbox. Não há acesso ao PostgreSQL de Ordens nem ao
+DynamoDB de Financeiro.
+
+## Estoque e reservas
+
+O serviço implementa quatro operações distribuídas:
+
+1. **Reserva:** reduz o saldo disponível e aumenta o reservado. Se não houver saldo,
+   registra o resultado de *backorder* sem deixar saldos negativos.
+2. **Liberação:** devolve ao disponível uma reserva ativa.
+3. **Recebimento:** uma peça recebida especificamente para a OS entra diretamente no
+   saldo reservado, sem passar pelo disponível.
+4. **Consumo:** reduz o saldo reservado e marca a reserva como consumida.
+
+Reserva inexistente, quantidade inválida e conflitos de payload têm respostas
+explícitas. Repetir uma operação terminal não movimenta o estoque novamente.
+
+## Comunicação assíncrona
+
+O consumer lê a FIFO Ordens → Recursos e processa:
+
+- `ReserveItem.v1`;
+- `ReleaseReservation.v1`;
+- `ReceiveBackorderedItem.v1`;
+- `ConsumeReservation.v1`.
+
+Na mesma transação PostgreSQL, ele registra a Inbox, aplica o efeito e grava o
+resultado na Outbox. O publisher envia pela FIFO Recursos → Ordens:
+
+- `ResourceReserved.v1`, `ItemBackordered.v1` ou `ReservationRejected.v1`;
+- `ReservationReleased.v1`;
+- `BackorderedItemReceived.v1`;
+- `ReservationConsumed.v1`.
+
+O transporte é *at-least-once*: a mensagem só recebe ACK após o commit local. Falhas
+transitórias são repetidas; após a política de redrive, seguem para a DLQ.
+
+## Idempotência e concorrência
+
+- `operation_id` identifica a operação de negócio e impede movimentação duplicada;
+- a Inbox deduplica `(consumer_name, message_id)`;
+- uma nova mensagem com a mesma operação e o mesmo payload devolve o resultado
+  persistido;
+- a mesma operação com payload divergente é conflito e não altera o primeiro efeito;
+- alterações concorrentes no mesmo item usam lock pessimista
+  `SELECT ... FOR UPDATE`;
+- Outbox, efeito de estoque e conclusão da Inbox são atômicos na transação local.
+
+## Execução local
+
+Para executar o sistema distribuído completo, use o
+[Kubernetes local de Infra](../mvp-oficina-infra/README.md#subir-o-ambiente-no-minikube).
+
+Para preparar o serviço no host:
 
 ```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
 make install
-make lint
-make test
-make build
-docker compose up --build
 ```
 
-Para a suíte isolada com PostgreSQL e ciclo Alembic:
+As configurações estão em `.env.example`. A API requer PostgreSQL migrado; o
+container runtime aplica Alembic e inicia o Uvicorn por `scripts/start.sh`. Publisher
+e consumer são processos separados:
+
+```bash
+python -m app.publisher
+python -m app.consumer
+```
+
+Para exercitar os fluxos distribuídos sem configurar manualmente a topologia, use o
+BDD de Infra:
+
+```bash
+cd ../mvp-oficina-infra
+make test-bdd
+```
+
+## Swagger
+
+Com o Checkpoint A ativo:
+
+```bash
+kubectl --context=minikube -n mvp-oficina port-forward service/recursos-api 8002:8002
+```
+
+Swagger UI: <http://127.0.0.1:8002/docs>
+
+OpenAPI JSON: <http://127.0.0.1:8002/openapi.json>
+
+O Kong publica apenas `/api/v1/servicos` e `/api/v1/itens-estoque`; ele não
+publica Swagger, OpenAPI ou rotas internas.
+
+## Testes e cobertura
+
+```bash
+make lint
+make test
+```
+
+O gate de cobertura de branches, configurado em `pyproject.toml`, é 80%. Para a
+suíte isolada com PostgreSQL real, migrations e ElasticMQ quando requerido:
 
 ```bash
 docker compose -f compose.test.yaml run --rm --build tests
 docker compose -f compose.test.yaml down --volumes --remove-orphans
 ```
 
-O health check fica em `GET /health` na porta `8002`. O CI executa lint, testes
-unitários, contratuais e de integração com PostgreSQL/ElasticMQ, gate global de
-cobertura e build sem publicar a imagem.
+## Documentação relacionada
 
-## Publisher da Outbox
-
-O publisher roda separado do FastAPI por `python -m app.publisher` ou
-`scripts/start-publisher.sh`. As variáveis, timeouts, lote, lease, polling e retry
-limitado estão em `.env.example`; `SQS_ENDPOINT_URL` é permitido apenas fora de
-produção. SIGTERM/SIGINT encerram o loop sem iniciar novo lote.
-
-A semântica é at-least-once. Envio aceito pelo SQS seguido de falha na confirmação
-PostgreSQL deixa o lease expirar e permite reenvio do mesmo `message_id`; a futura
-Inbox, não a janela de deduplicação FIFO, impedirá efeitos de negócio repetidos.
-
-## Consumer e Inbox
-
-O processo independente inicia por `python -m app.consumer` ou
-`scripts/start-consumer.sh`. Ele usa long polling, concorrência limitada, renovação do
-visibility timeout e ACK somente após commit. A Inbox separa a deduplicação de
-transporte `(consumer_name, message_id)` da idempotência de negócio por chave semântica
-(`reserve`, `release`, `receive-backordered` ou `consume` + `operation_id`). Mensagem
-nova com a mesma operação e payload não repete o efeito; payload divergente é conflito
-e segue o redrive/DLQ.
-
-O handler recebe a mesma sessão PostgreSQL da Inbox, portanto efeito local, eventual
-Outbox de resposta e conclusão da Inbox são confirmados atomicamente. Tipos não
-aprovados, contrato inválido, conflito de idempotência ou falha técnica permanecem sem
-ACK e seguem retry/redrive; não são convertidos em sucesso ou rejeição de negócio.
+- [Arquitetura distribuída](../mvp-oficina-infra/docs/diagrams/arquitetura.md)
+- [Saga e comunicação](../mvp-oficina-infra/docs/diagrams/saga-comunicacao.md)
+- [Contratos de Recursos](contracts/README.md)
+- [README principal de Infra](../mvp-oficina-infra/README.md)
